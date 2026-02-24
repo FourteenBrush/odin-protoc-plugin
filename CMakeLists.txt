@@ -15,7 +15,7 @@ find_package(fmt CONFIG REQUIRED)
 # See https://github.com/protocolbuffers/protobuf/issues/12450
 set(PROTO_BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}")
 
-add_library(proto-objects OBJECT "${CMAKE_CURRENT_LIST_DIR}/protobuf/options.proto")
+add_library(proto-objects OBJECT "${CMAKE_CURRENT_LIST_DIR}/protobuf/odin.proto")
 target_include_directories(proto-objects PUBLIC "$<BUILD_INTERFACE:${PROTO_BINARY_DIR}>")
 
 protobuf_generate(
