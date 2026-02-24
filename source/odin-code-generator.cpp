@@ -212,17 +212,14 @@ static bool SetError(Context *const context, const FieldDescriptor *field, const
 static bool ValidateOneofFieldTypes(const OneofDescriptor &oneof_desc, Context *const context, bool *out_use_tagged_union)
 {
     // TYPE_MESSAGE name, or scalar field type
-    using OneofFieldType = std::variant<std::string_view, FieldDescriptor::Type>;
-
     bool force_tagged = false;
-    std::unordered_set<OneofFieldType> used_field_types;
+    std::unordered_set<std::string_view> used_field_types;
 
     for (int idx = 0; idx < oneof_desc.field_count(); ++idx)
     {
         const FieldDescriptor *field = oneof_desc.field(idx);
         bool has_extension = field->options().HasExtension(odin);
-        // FIXME: use string repr of FieldDescriptor::Type, actual string type and oneof_type="string" are wrongly distinct
-        OneofFieldType field_type = field->type();
+        std::string_view field_type;
 
         if (has_extension)
         {
@@ -238,6 +235,10 @@ static bool ValidateOneofFieldTypes(const OneofDescriptor &oneof_desc, Context *
         else if (field->type() == FieldDescriptor::TYPE_MESSAGE)
         {
             field_type = field->message_type()->full_name();
+        }
+        else
+        {
+            field_type = GetOdinBuiltinTypeName(GetOdinBuiltinType(field->type()));
         }
 
         auto [_, inserted] = used_field_types.insert(field_type);
