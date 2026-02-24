@@ -1,4 +1,14 @@
 #include "odin-code-generator.h"
+#include <algorithm>
+#include <fmt/format.h>
+#include <google/protobuf/descriptor.h>
+#include <google/protobuf/descriptor.pb.h>
+#include <google/protobuf/descriptor_lite.h>
+#include <string_view>
+#include <unordered_set>
+#include <variant>
+
+#include "options.pb.h"
 
 using namespace google::protobuf;
 
@@ -188,22 +198,123 @@ static bool PrintField(const FieldDescriptor &field_desc, Context *const context
 	return true;
 }
 
+static bool SetError(Context *const context, const FieldDescriptor *field, const std::string &message)
+{
+    SourceLocation loc;
+    assert(field->GetSourceLocation(&loc) && "synthetic field passed");
+
+    // default error prefix by protoc seems to be "--odin_out: <filename>: "
+    *context->error = fmt::format("line {}: {}", loc.start_line + 1, message);
+    return false;
+}
+
+// Returns whether a oneof type can be transformed into a tagged union, and whether any attached extensions are valid.
+static bool ValidateOneofFieldTypes(const OneofDescriptor &oneof_desc, Context *const context, bool *out_use_tagged_union)
+{
+    // TYPE_MESSAGE name, or scalar field type
+    using OneofFieldType = std::variant<std::string_view, FieldDescriptor::Type>;
+
+    bool force_tagged = false;
+    std::unordered_set<OneofFieldType> used_field_types;
+
+    for (int idx = 0; idx < oneof_desc.field_count(); ++idx)
+    {
+        const FieldDescriptor *field = oneof_desc.field(idx);
+        bool has_extension = field->options().HasExtension(odin);
+        // FIXME: use string repr of FieldDescriptor::Type, actual string type and oneof_type="string" are wrongly distinct
+        OneofFieldType field_type = field->type();
+
+        if (has_extension)
+        {
+            const OdinOptions &options = field->options().GetExtension(odin);
+            field_type = options.oneof_type();
+            force_tagged = true;
+
+            if (options.oneof_type().empty())
+            {
+                return SetError(context, field, "odin.oneof_type must not be empty");
+            }
+        }
+        else if (field->type() == FieldDescriptor::TYPE_MESSAGE)
+        {
+            field_type = field->message_type()->full_name();
+        }
+
+        auto [_, inserted] = used_field_types.insert(field_type);
+        if (!inserted)
+        {
+            if (force_tagged)
+            {
+                return SetError(context, field, fmt::format(
+                    "Duplicate Odin union type for field {} in oneof '{}' after applying odin.oneof_type overrides",
+                    field->name(), oneof_desc.name()
+                ));
+            }
+
+            *out_use_tagged_union = false; // silently fallback to C style #raw_union
+            return true;
+        }
+    }
+
+    *out_use_tagged_union = true;
+    return true;
+}
+
 static bool PrintOneof(const OneofDescriptor &oneof_desc, Context *const context)
 {
+    bool gen_tagged_union;
+    if (!ValidateOneofFieldTypes(oneof_desc, context, &gen_tagged_union))
+    {
+        return false;
+    }
+    fmt::print(stderr, "tagged union: {}", gen_tagged_union);
+
 	std::map<std::string, std::string> vars{
 		{"name", std::string(oneof_desc.name())},
 	};
+    if (gen_tagged_union)
+    {
+        context->printer.Print(vars, "\n$name$: union {\n");
+        context->printer.Indent();
 
-	context->printer.Print(vars, "\n$name$: struct #raw_union {\n");
-	context->printer.Indent();
+        for (int idx = 0; idx < oneof_desc.field_count(); ++idx)
+        {
+            const FieldDescriptor *field = oneof_desc.field(idx);
+            // TODO: if custom field type is specified, but actual field is scalar, should we generate
+            // a "field_type :: distinct actual_type" ?
+            bool has_extension = field->options().HasExtension(odin);
+            std::string effective_type;
+            if (has_extension)
+            {
+                effective_type = field->options().GetExtension(odin).oneof_type();
+            }
+            else if (field->type() == FieldDescriptor::TYPE_MESSAGE)
+            {
+                effective_type = field->message_type()->name();
+            }
+            else
+            {
+                effective_type = GetOdinFieldTypeName(*field, context->proto_package);
+            }
 
-	for (int idx = 0; idx < oneof_desc.field_count(); ++idx)
-	{
-		if (!PrintField(*oneof_desc.field(idx), context))
-		{
-			return false;
-		}
-	}
+            context->printer.Print({{"odin_type", effective_type}}, "$odin_type$,\n");
+        }
+
+        // TODO: generate field nr -> union discriminant lookup, as types cannot have field tags
+    }
+    else
+    {
+        context->printer.Print(vars, "\n$name$: struct #raw_union {\n");
+        context->printer.Indent();
+
+        for (int idx = 0; idx < oneof_desc.field_count(); ++idx)
+        {
+            if (!PrintField(*oneof_desc.field(idx), context))
+            {
+                return false;
+            }
+        }
+    }
 
 	context->printer.Outdent();
 	context->printer.Print("},\n");

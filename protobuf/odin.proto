@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+import "google/protobuf/descriptor.proto";
+
+extend google.protobuf.FieldOptions {
+  OdinOptions odin = 1376;
+}
+
+message OdinOptions {
+  string oneof_type = 1;
+}
