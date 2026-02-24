@@ -159,6 +159,27 @@ static std::string GetOdinFieldTypeName(const FieldDescriptor &field_desc, const
 	return type_name;
 }
 
+// FIXME: make tag name overridable
+static void PrintUnionDiscriminantField(const OneofDescriptor &oneof_desc, Context *const context)
+{
+    std::map<std::string, std::string> vars{
+        {"oneof_name", std::string(oneof_desc.name())},
+    };
+    context->printer.Print(vars, "$oneof_name$_variant: enum {\n");
+
+    vars.clear();
+    context->printer.Indent();
+    for (int idx = 0; idx < oneof_desc.field_count(); ++idx) {
+        const FieldDescriptor *field = oneof_desc.field(idx);
+        vars["name"] = field->name();
+        vars["number"] = fmt::to_string(idx);
+        context->printer.Print(vars, "$name$ = $number$,\n");
+    }
+
+    context->printer.Outdent();
+    context->printer.Print(vars, "}\n");
+}
+
 static bool PrintField(const FieldDescriptor &field_desc, Context *const context)
 {
 	// TODO: handle default values
@@ -317,6 +338,10 @@ static bool PrintOneof(const OneofDescriptor &oneof_desc, Context *const context
 
 	context->printer.Outdent();
 	context->printer.Print("},\n");
+    if (!gen_tagged_union)
+    {
+        PrintUnionDiscriminantField(oneof_desc, context);
+    }
 
 	return true;
 }

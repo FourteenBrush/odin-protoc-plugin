@@ -67,7 +67,7 @@ WriteRequest :: struct {}
 // ...extra boilerplate
 ```
 
-Tagged unions may contain message types, scalar types, or custom Odin types, provided that all resulting union members are distinct.
+Tagged unions may contain message types or scalar types, provided that all resulting union members are distinct.
 
 ### Explicit type overrides
 
@@ -91,19 +91,18 @@ UserAction :: struct {
 
 LoginAction  :: distinct string
 LogoutAction :: distinct string
-// ...extra boilerplate
+// ...extra boilerplate code
 ```
 
 Rules for `(odin).oneof_type`:
 
 - The annotation forces generation of a tagged union.
-- The annotation value must not be empty.
 - After applying overrides, all union member types must be distinct.
 - Duplicate effective types result in a compilation error.
 
 ### Raw unions and explicit discriminants
 
-A C-style `#raw_union` is generated **only when effective field types in a `oneof` are not distinct** and no `(odin).oneof_type` annotations are present to force a tagged union.  
+A C-style `#raw_union` is generated **only when effective field types in a `oneof` are not distinct** and no `(odin).oneof_type` annotations are present to force generation of a tagged union.  
 
 In this case, an explicit discriminator field is generated alongside the union. The discriminator is named `<oneof_name>_variant` and is an enum listing all field names in the `oneof`.  
 
@@ -123,11 +122,10 @@ UserAction :: struct {
     set_hostname : string `id:"2" type:"9"`,
     set_other_id : i32 `id:"3" type:"5"`,
   },
-
   content_variant : enum {
-    set_user_id,
-    set_hostname,
-    set_other_id,
+    set_user_id  = 0,
+    set_hostname = 1,
+    set_other_id = 2,
   },
 }
 ```
