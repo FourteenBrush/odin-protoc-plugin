@@ -6,7 +6,6 @@
 #include <google/protobuf/descriptor_lite.h>
 #include <string_view>
 #include <unordered_set>
-#include <variant>
 
 #include "options.pb.h"
 
@@ -268,7 +267,6 @@ static bool PrintOneof(const OneofDescriptor &oneof_desc, Context *const context
     {
         return false;
     }
-    fmt::print(stderr, "tagged union: {}", gen_tagged_union);
 
 	std::map<std::string, std::string> vars{
 		{"name", std::string(oneof_desc.name())},
