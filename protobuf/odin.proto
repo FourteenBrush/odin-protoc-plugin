@@ -7,5 +7,10 @@ extend google.protobuf.FieldOptions {
 }
 
 message OdinOptions {
-  string external = 1;
+  oneof type_hint {
+    // Reference an already-existing external type
+    string external = 1;
+    // Generate a type alias with this name
+    string typedef  = 2;
+  }
 }

@@ -1,10 +1,10 @@
 #include "odin-code-generator.h"
-#include <algorithm>
 #include <fmt/format.h>
 #include <google/protobuf/descriptor.h>
 #include <google/protobuf/descriptor.pb.h>
 #include <google/protobuf/descriptor_lite.h>
 #include <string_view>
+#include <unordered_map>
 #include <unordered_set>
 
 #include "odin.pb.h"
@@ -228,10 +228,9 @@ static bool SetError(Context *const context, const FieldDescriptor *field, const
     return false;
 }
 
-// Returns whether a oneof type can be transformed into a tagged union, and whether any attached extensions are valid.
+// Returns whether a oneof type can be transformed into a tagged union, and whether any attached annotations are valid.
 static bool ValidateOneofFieldTypes(const OneofDescriptor &oneof_desc, Context *const context, bool *out_use_tagged_union)
 {
-    // TYPE_MESSAGE name, or scalar field type
     bool force_tagged = false;
     std::unordered_set<std::string_view> used_field_types;
 
@@ -244,13 +243,19 @@ static bool ValidateOneofFieldTypes(const OneofDescriptor &oneof_desc, Context *
         if (has_extension)
         {
             const OdinOptions &options = field->options().GetExtension(odin);
-            field_type = options.external();
-            force_tagged = true;
-
-            if (options.external().empty())
+            // NOTE: we cannot detect has_external() and has_typedef_() being set at the same time as protoc
+            // for some bizarre reason does not enforce detection of this, only the last used option is set
+            if (options.has_external() && options.external().empty())
             {
-                return SetError(context, field, "odin.external must not be empty");
+                return SetError(context, field, "(odin).external must not be empty");
             }
+            else if (options.has_typedef_() && options.typedef_().empty())
+            {
+                return SetError(context, field, "(odin).typedef must not be empty");
+            }
+
+            field_type = options.has_external() ? options.external() : options.typedef_();
+            force_tagged = true;
         }
         else if (field->type() == FieldDescriptor::TYPE_MESSAGE)
         {
@@ -267,8 +272,8 @@ static bool ValidateOneofFieldTypes(const OneofDescriptor &oneof_desc, Context *
             if (force_tagged)
             {
                 return SetError(context, field, fmt::format(
-                    "Duplicate Odin union type for field {} in oneof '{}' after applying odin.external overrides",
-                    field->name(), oneof_desc.name()
+                    "Duplicate Odin union type {} for field {} after applying (odin).external/typedef overrides",
+                    field_type, field->name()
                 ));
             }
 
@@ -281,7 +286,10 @@ static bool ValidateOneofFieldTypes(const OneofDescriptor &oneof_desc, Context *
     return true;
 }
 
-static bool PrintOneof(const OneofDescriptor &oneof_desc, Context *const context)
+// Alias -> Underlying type
+using TypeAliasMap = std::unordered_map<std::string_view, std::string_view>;
+
+static bool PrintOneof(const OneofDescriptor &oneof_desc, Context *const context, TypeAliasMap *type_aliases)
 {
     bool gen_tagged_union;
     if (!ValidateOneofFieldTypes(oneof_desc, context, &gen_tagged_union))
@@ -300,13 +308,33 @@ static bool PrintOneof(const OneofDescriptor &oneof_desc, Context *const context
         for (int idx = 0; idx < oneof_desc.field_count(); ++idx)
         {
             const FieldDescriptor *field = oneof_desc.field(idx);
-            // TODO: if custom field type is specified, but actual field is scalar, should we generate
-            // a "field_type :: distinct actual_type" ?
             bool has_extension = field->options().HasExtension(odin);
             std::string effective_type;
             if (has_extension)
             {
-                effective_type = field->options().GetExtension(odin).external();
+                const OdinOptions &options = field->options().GetExtension(odin);
+                if (options.has_external())
+                {
+                    effective_type = options.external();
+                }
+                else if (options.has_typedef_())
+                {
+                    effective_type = options.typedef_();
+                    std::string_view alias = options.typedef_();
+                    std::string_view underlying_type = field->type() == FieldDescriptor::TYPE_MESSAGE
+                        ? field->message_type()->name() // cannot get Odin builtin type name for messages
+                        : GetOdinBuiltinTypeName(GetOdinBuiltinType(field->type()));
+
+                    // TODO: "[]u8" and "[]byte" are supposed to create a collision
+                    auto [it, inserted] = type_aliases->emplace(alias, underlying_type);
+                    if (!inserted && it->second != underlying_type)
+                    {
+                        return SetError(context, field, fmt::format(
+                            "Type alias '{}' already refers to '{}', cannot redefine as '{}'",
+                            alias, it->second, underlying_type
+                        ));
+                    }
+                }
             }
             else if (field->type() == FieldDescriptor::TYPE_MESSAGE)
             {
@@ -319,7 +347,6 @@ static bool PrintOneof(const OneofDescriptor &oneof_desc, Context *const context
 
             context->printer.Print({{"odin_type", effective_type}}, "$odin_type$,\n");
         }
-
         // TODO: generate field nr -> union discriminant lookup, as types cannot have field tags
     }
     else
@@ -373,7 +400,7 @@ static bool PrintEnum(const EnumDescriptor &enum_desc, Context *const context)
 	return true;
 }
 
-static bool PrintMessage(const Descriptor &message_desc, Context *const context)
+static bool PrintMessage(const Descriptor &message_desc, Context *const context, TypeAliasMap *type_aliases)
 {
 	// we don't generate custom types for maps
 	assert(message_desc.map_key() == nullptr);
@@ -402,7 +429,7 @@ static bool PrintMessage(const Descriptor &message_desc, Context *const context)
 
 	for (int idx = 0; idx < message_desc.oneof_decl_count(); ++idx)
 	{
-		if (!PrintOneof(*message_desc.oneof_decl(idx), context))
+		if (!PrintOneof(*message_desc.oneof_decl(idx), context, type_aliases))
 		{
 			return false;
 		}
@@ -424,7 +451,7 @@ static bool PrintMessage(const Descriptor &message_desc, Context *const context)
 			continue;
 		}
 
-		if (!PrintMessage(nested_type, context))
+		if (!PrintMessage(nested_type, context, type_aliases))
 		{
 			return false;
 		}
@@ -451,7 +478,7 @@ static bool PrintFile(const FileDescriptor &file_desc, Context *const context)
 			? base_package_name
 			: fmt::format("{}_{}", base_package_name, ConvertFullTypeName(file_desc.package(), ""));
 
-	const std::map<std::string, std::string> vars{
+	std::map<std::string, std::string> vars{
 		{"package", package_name},
 	};
 
@@ -459,13 +486,21 @@ static bool PrintFile(const FileDescriptor &file_desc, Context *const context)
 
 	// TODO: handle dependencies, i.e. file_desc.dependency and file_desc.public_dependency
 
+    TypeAliasMap type_aliases_to_generate;
 	for (int idx = 0; idx < file_desc.message_type_count(); ++idx)
 	{
-		if (!PrintMessage(*file_desc.message_type(idx), context))
+		if (!PrintMessage(*file_desc.message_type(idx), context, &type_aliases_to_generate))
 		{
 			return false;
 		}
 	}
+
+    vars.clear();
+    for (const auto &[alias, underlying] : type_aliases_to_generate) {
+        vars["alias"] = alias;
+        vars["underlying"] = underlying;
+        context->printer.Print(vars, "$alias$ :: distinct $underlying$\n");
+    }
 
 	for (int idx = 0; idx < file_desc.enum_type_count(); ++idx)
 	{

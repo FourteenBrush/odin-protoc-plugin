@@ -95,10 +95,12 @@ UserAction :: struct {
 // ...extra boilerplate code
 ```
 > [!WARNING]
-> The generated code above will not compile if there are no `LoginAction` and `LogoutAction` types
-> visible to this package (manually provided at the same place of the generated code).
+> The generated code above assumes that `LoginAction` and `LogoutAction` types are defined and accessible in this
+> package at the same location as the generated file. If they are missing, trying to compile this
+> code will fail..
 >
-> What we can do instead is instruct the generator to explicitly generate type aliases for us through the `[(odin).typedef]` annotation, this annotation cannot be used in combination with `[(odin).external]`, which only
+> What we can do instead is instruct the generator to generate type aliases for us through the `[(odin).typedef]`
+> annotation. Note that this annotation cannot combined with `[(odin).external]`, which only
 > references a supposedly already existing type:
 ```proto
 message UserAction {
@@ -118,6 +120,7 @@ UserAction :: struct {
   },
 }
 
+// generated aliases using the backing field types
 LoginAction  :: distinct string
 LogoutAction :: distinct string
 ```
@@ -125,12 +128,20 @@ LogoutAction :: distinct string
 Rules for `(odin).external`:
 
 - The annotation forces generation of a tagged union.
-- After applying overrides, all union member types must be distinct.
+- After applying overrides, all union member types must be distinct, so the following will not work
+as they share the same generated types.
+  ```proto
+    oneof res {
+      bytes a = 1;
+      bytes b = 2 [(odin).external = "[]u8"];
+    };
+  ```
+  You could instead generate an alias through `[(odin).typedef]` and specify a custom type name.
 - Duplicate effective types result in a compilation error.
 
 ### Raw unions and explicit discriminants
 
-A C-style `#raw_union` is generated **only when effective field types in a `oneof` are not distinct** and no `(odin).external` annotations are present to force generation of a tagged union.  
+A C-style `#raw_union` is generated **only when effective field types in a `oneof` are not distinct** and no `(odin).external`/`(odin).typedef` annotations are present to force generation of a tagged union.  
 
 In this case, an explicit discriminator field is generated alongside the union. The discriminator is named `<oneof_name>_variant` and is an enum listing all field names in the `oneof`.  
 
