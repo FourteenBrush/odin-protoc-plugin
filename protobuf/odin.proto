@@ -7,5 +7,5 @@ extend google.protobuf.FieldOptions {
 }
 
 message OdinOptions {
-  string oneof_type = 1;
+  string external = 1;
 }

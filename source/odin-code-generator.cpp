@@ -7,7 +7,7 @@
 #include <string_view>
 #include <unordered_set>
 
-#include "options.pb.h"
+#include "odin.pb.h"
 
 using namespace google::protobuf;
 
@@ -244,12 +244,12 @@ static bool ValidateOneofFieldTypes(const OneofDescriptor &oneof_desc, Context *
         if (has_extension)
         {
             const OdinOptions &options = field->options().GetExtension(odin);
-            field_type = options.oneof_type();
+            field_type = options.external();
             force_tagged = true;
 
-            if (options.oneof_type().empty())
+            if (options.external().empty())
             {
-                return SetError(context, field, "odin.oneof_type must not be empty");
+                return SetError(context, field, "odin.external must not be empty");
             }
         }
         else if (field->type() == FieldDescriptor::TYPE_MESSAGE)
@@ -267,7 +267,7 @@ static bool ValidateOneofFieldTypes(const OneofDescriptor &oneof_desc, Context *
             if (force_tagged)
             {
                 return SetError(context, field, fmt::format(
-                    "Duplicate Odin union type for field {} in oneof '{}' after applying odin.oneof_type overrides",
+                    "Duplicate Odin union type for field {} in oneof '{}' after applying odin.external overrides",
                     field->name(), oneof_desc.name()
                 ));
             }
@@ -306,7 +306,7 @@ static bool PrintOneof(const OneofDescriptor &oneof_desc, Context *const context
             std::string effective_type;
             if (has_extension)
             {
-                effective_type = field->options().GetExtension(odin).oneof_type();
+                effective_type = field->options().GetExtension(odin).external();
             }
             else if (field->type() == FieldDescriptor::TYPE_MESSAGE)
             {

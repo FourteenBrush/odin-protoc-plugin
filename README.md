@@ -37,47 +37,51 @@ SearchRequest :: struct {
 
 ### Tagged unions
 
-A tagged union is generated when all effective field types inside the `oneof` are distinct. Distinctness is evaluated after applying any explicit type overrides via the `(odin).oneof_type` extension.
+A tagged union is generated when all effective field types inside the `oneof` are distinct. Distinctness is evaluated after applying any explicit type overrides via the `(odin).external` extension.
 
 The following message will therefore generate the following code:
 ```proto
 message SystemRequest {
   int32 command_id = 1;
   oneof payload {
-      ReadRequest read_request = 2;
-      WriteRequest write_request = 3;
+    ReadRequest read_request = 2;
+    WriteRequest write_request = 3;
   }
 }
 
-message ReadRequest {}
+message ReadRequest {
+  string path = 1;
+}
 message WriteRequest {}
 ```
 ```odin
 SystemRequest :: struct {
   command_id : i32 `id:"1" type:"5"`,
   payload: union {
-      ReadRequest,
-      WriteRequest,
+    ReadRequest,
+    WriteRequest,
   },
 }
 
-ReadRequest :: struct {}
+ReadRequest  :: struct {
+  path: string `id:"1" type:"9"`,
+}
 WriteRequest :: struct {}
 
-// ...extra boilerplate
+// ...extra boilerplate code
 ```
 
 Tagged unions may contain message types or scalar types, provided that all resulting union members are distinct.
 
 ### Explicit type overrides
 
-Fields can be annotated with `(odin).oneof_type` to control which Odin type is used inside a tagged union:
+Fields can be annotated with `(odin).external` to control which Odin type is used inside a tagged union:
 
 ```proto
 message UserAction {
   oneof payload {
-    string login_with_username  = 1 [(odin).oneof_type = "LoginAction"];
-    string logout_with_username = 2 [(odin).oneof_type = "LogoutAction"];
+    string login_with_username  = 1 [(odin).external = "LoginAction"];
+    string logout_with_username = 2 [(odin).external = "LogoutAction"];
   }
 }
 ```
@@ -88,13 +92,37 @@ UserAction :: struct {
     LogoutAction,
   },
 }
+// ...extra boilerplate code
+```
+> [!WARNING]
+> The generated code above will not compile if there are no `LoginAction` and `LogoutAction` types
+> visible to this package (manually provided at the same place of the generated code).
+>
+> What we can do instead is instruct the generator to explicitly generate type aliases for us through the `[(odin).typedef]` annotation, this annotation cannot be used in combination with `[(odin).external]`, which only
+> references a supposedly already existing type:
+```proto
+message UserAction {
+  oneof payload {
+    string login_with_username  = 1 [(odin).typedef = "LoginAction"];
+    string logout_with_username = 2 [(odin).typedef = "LogoutAction"];
+  }
+}
+```
+Which will generate the following aliases for us:
+```odin
+// exact same union as before
+UserAction :: struct {
+  payload: union {
+    LoginAction,
+    LogoutAction,
+  },
+}
 
 LoginAction  :: distinct string
 LogoutAction :: distinct string
-// ...extra boilerplate code
 ```
 
-Rules for `(odin).oneof_type`:
+Rules for `(odin).external`:
 
 - The annotation forces generation of a tagged union.
 - After applying overrides, all union member types must be distinct.
@@ -102,7 +130,7 @@ Rules for `(odin).oneof_type`:
 
 ### Raw unions and explicit discriminants
 
-A C-style `#raw_union` is generated **only when effective field types in a `oneof` are not distinct** and no `(odin).oneof_type` annotations are present to force generation of a tagged union.  
+A C-style `#raw_union` is generated **only when effective field types in a `oneof` are not distinct** and no `(odin).external` annotations are present to force generation of a tagged union.  
 
 In this case, an explicit discriminator field is generated alongside the union. The discriminator is named `<oneof_name>_variant` and is an enum listing all field names in the `oneof`.  
 
@@ -135,7 +163,7 @@ This fallback ensures correctness when tagged union constraints cannot be satisf
 ### Summary of generation rules
 
 - If all effective field types are distinct → generate tagged union.
-- If duplicates exist and no `(odin).oneof_type` is used → generate `#raw_union` with discriminator.
-- If any field uses `(odin).oneof_type` → tagged union is required.
+- If duplicates exist and no `(odin).external` is used → generate `#raw_union` with discriminator.
+- If any field uses `(odin).external` → tagged union is required.
 - If forced tagged union still contains duplicate types → generation fails.
-- Empty `(odin).oneof_type` values are invalid.
+- Empty `(odin).external` values are invalid.
