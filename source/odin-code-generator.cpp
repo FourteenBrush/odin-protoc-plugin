@@ -177,7 +177,7 @@ static void PrintUnionDiscriminantField(const OneofDescriptor &oneof_desc, Conte
     }
 
     context->printer.Outdent();
-    context->printer.Print(vars, "}\n");
+    context->printer.Print(vars, "},\n");
 }
 
 static bool PrintField(const FieldDescriptor &field_desc, Context *const context)
